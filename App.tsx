@@ -58,7 +58,6 @@ const AppRoutes = () => {
       <Route path="/register" element={currentUser ? <Navigate to="/" replace /> : <AuthForm mode="register" />} />
       <Route path="/public-plans" element={<PublicPlansPage />} />
       
-      
       <Route path="/dashboard" element={
         <RouteWrapper isPrivate userOnly>
           <UserDashboard />

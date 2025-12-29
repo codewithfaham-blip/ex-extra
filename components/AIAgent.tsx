@@ -48,7 +48,8 @@ export const AIAgent: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+      // Fix: Use new GoogleGenAI with named parameter apiKey and ensure correct SDK usage by referencing process.env.API_KEY directly
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
       const userContext = `
         MEMBER CORE:
@@ -70,6 +71,7 @@ export const AIAgent: React.FC = () => {
         User Data: ${userContext}
       `;
 
+      // Fix: Use ai.chats.create and select the correct Gemini 3 model for text tasks
       const chat: Chat = ai.chats.create({
         model: 'gemini-3-flash-preview',
         config: {
@@ -78,6 +80,7 @@ export const AIAgent: React.FC = () => {
         },
       });
 
+      // Fix: Use correct sendMessage parameter structure and access .text property directly
       const response: GenerateContentResponse = await chat.sendMessage({ message: userMessage });
       const text = response.text || "PROTOCOL FAILURE: NO RESPONSE.";
       

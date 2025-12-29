@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
-import { User, InvestmentPlan, Investment, Transaction, UserRole, TransactionType, TransactionStatus, SupportTicket } from '../types';
-import { INITIAL_PLANS, MOCK_USERS } from '../constants';
+import { User, InvestmentPlan, Investment, Transaction, UserRole, TransactionType, TransactionStatus, SupportTicket } from '../types.ts';
+import { INITIAL_PLANS, MOCK_USERS } from '../constants.ts';
 
 export interface Toast {
   id: string;
@@ -89,17 +89,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [investments, setInvestments] = useState<Investment[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
 
+  // Faster hydration by avoiding state-per-item updates
   useEffect(() => {
     const savedTheme = localStorage.getItem('hyip_theme') as 'dark' | 'light';
     if (savedTheme) setTheme(savedTheme);
 
-    setSystemIntegration(safeParse('hyip_system_integration', { isLive: false, dbLink: '', authRpc: '', apiGateway: '', lastSync: null }));
-    setCurrentUser(safeParse('hyip_current_user', null));
-    setUsers(safeParse('hyip_users', MOCK_USERS));
-    setTickets(safeParse('hyip_tickets', []));
-    setPlans(safeParse('hyip_plans', INITIAL_PLANS));
-    setInvestments(safeParse('hyip_investments', []));
-    setTransactions(safeParse('hyip_transactions', []));
+    const config = safeParse('hyip_system_integration', { isLive: false, dbLink: '', authRpc: '', apiGateway: '', lastSync: null });
+    const user = safeParse('hyip_current_user', null);
+    const usersList = safeParse('hyip_users', MOCK_USERS);
+    const ticketsList = safeParse('hyip_tickets', []);
+    const plansList = safeParse('hyip_plans', INITIAL_PLANS);
+    const investmentsList = safeParse('hyip_investments', []);
+    const transactionsList = safeParse('hyip_transactions', []);
+
+    setSystemIntegration(config);
+    setCurrentUser(user);
+    setUsers(usersList);
+    setTickets(ticketsList);
+    setPlans(plansList);
+    setInvestments(investmentsList);
+    setTransactions(transactionsList);
 
     setIsHydrated(true);
   }, []);

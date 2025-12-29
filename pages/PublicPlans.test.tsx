@@ -1,14 +1,16 @@
 import React from 'react';
 // Fix: Added missing imports for vitest globals
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+// Fix: Destructured getByText from render as screen is not exported in this environment
+import { render } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { AppProvider } from '../store/AppContext';
 import { PublicPlansPage } from './PublicPlans';
 
 describe('PublicPlansPage', () => {
   it('renders the investment plans', () => {
-    render(
+    // Fix: Destructured getByText to avoid "screen is not exported" error from @testing-library/react
+    const { getByText } = render(
       <MemoryRouter>
         <AppProvider>
           <PublicPlansPage />
@@ -16,9 +18,9 @@ describe('PublicPlansPage', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByText('Investment Plans')).toBeInTheDocument();
-    expect(screen.getByText('Standard Alpha')).toBeInTheDocument();
-    expect(screen.getByText('Ethereum Plus')).toBeInTheDocument();
-    expect(screen.getByText('Bitcoin Pro')).toBeInTheDocument();
+    expect(getByText('Investment Plans')).toBeInTheDocument();
+    expect(getByText('Standard Alpha')).toBeInTheDocument();
+    expect(getByText('Ethereum Plus')).toBeInTheDocument();
+    expect(getByText('Bitcoin Pro')).toBeInTheDocument();
   });
 });
