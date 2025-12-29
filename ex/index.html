@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CryptoYield | Premium Investment Platform</title>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#0b0e14">
+    <script>
+      // Polyfill process for browser environment
+      window.process = { env: { API_KEY: "" } };
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              brand: {
+                dark: '#0b0e14',
+                darkSecondary: '#0e121a',
+                light: '#f5f7fa',
+                lightSecondary: '#ffffff',
+                primary: '#2563eb',
+                primaryLight: '#eff6ff'
+              }
+            },
+            boxShadow: {
+              'premium-light': '0 10px 30px -10px rgba(37, 99, 235, 0.1)',
+              'premium-dark': '0 10px 40px -15px rgba(0, 0, 0, 0.5)'
+            }
+          }
+        }
+      }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.2.0",
+    "react-dom": "https://esm.sh/react-dom@18.2.0",
+    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+    "lucide-react": "https://esm.sh/lucide-react@0.454.0",
+    "react-router-dom": "https://esm.sh/react-router-dom@6.22.3",
+    "recharts": "https://esm.sh/recharts@2.12.2",
+    "@google/generative-ai": "https://esm.sh/@google/generative-ai@0.21.0",
+    "react-dom/": "https://esm.sh/react-dom@18.2.0/",
+    "react/": "https://esm.sh/react@18.2.0/",
+    "next/": "https://esm.sh/next@^16.1.1/"
+  }
+}
+</script>
+    <style>
+      :root {
+        --brand-dark: #0b0e14;
+        --brand-light: #f5f7fa;
+      }
+      html.dark body {
+        background-color: var(--brand-dark);
+        color: #f1f5f9;
+      }
+      body {
+        background-color: var(--brand-light);
+        color: #0f172a;
+        margin: 0;
+        font-family: 'Inter', sans-serif;
+      }
+      #root {
+        min-height: 100vh;
+      }
+    </style>
+    <style type="text/tailwindcss">
+      @layer base {
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { @apply bg-transparent; }
+        ::-webkit-scrollbar-thumb { @apply bg-gray-300 dark:bg-gray-800 rounded-full border-2 border-transparent bg-clip-padding; }
+        ::-webkit-scrollbar-thumb:hover { @apply bg-gray-400 dark:bg-gray-700; }
+        
+        body { 
+          @apply transition-colors duration-500;
+        }
+      }
+      
+      .font-mono { font-family: 'JetBrains Mono', monospace; }
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      
+      *, *::before, *::after {
+        transition-property: background-color, border-color, color, fill, stroke, box-shadow;
+        transition-duration: 400ms;
+      }
+
+      .pb-safe {
+        padding-bottom: env(safe-area-inset-bottom);
+      }
+    </style>
+  <link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

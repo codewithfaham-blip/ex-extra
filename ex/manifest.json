@@ -1,0 +1,22 @@
+
+{
+  "name": "CryptoYield Premium",
+  "short_name": "CryptoYield",
+  "description": "Institutional Grade High Yield Investment Platform",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b0e14",
+  "theme_color": "#2563eb",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/2502/2502128.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/2502/2502128.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
