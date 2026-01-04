@@ -1,6 +1,42 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
-import { User, InvestmentPlan, Investment, Transaction, UserRole, TransactionType, TransactionStatus, SupportTicket } from '../types.ts';
-import { INITIAL_PLANS, MOCK_USERS } from '../constants.ts';
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut, 
+  onAuthStateChanged,
+  User as FirebaseUser,
+  sendPasswordResetEmail
+} from 'firebase/auth';
+import { auth } from '../services/firebase';
+import { 
+  User, 
+  PortfolioHolding, 
+  Transaction, 
+  PortfolioMetrics,
+  PortfolioSnapshot,
+  AssetAllocation,
+  SupportTicket,
+  AssetType,
+  TransactionType,
+  TransactionStatus,
+  UserRole 
+} from '../types';
+import { 
+  saveHolding, 
+  getHoldings, 
+  deleteHolding, 
+  updateHolding,
+  saveTransaction,
+  getTransactions,
+  saveSnapshot,
+  getSnapshots,
+  calculatePortfolioMetrics,
+  calculateAssetAllocation,
+  saveUser,
+  getUser
+} from '../services/portfolio';
+import { fetchAssetPrice, fetchMultiplePrices } from '../services/marketData';
+import { DEMO_USER, PRICE_UPDATE_INTERVAL, SNAPSHOT_INTERVAL } from '../constants';
 
 export interface Toast {
   id: string;
@@ -9,64 +45,41 @@ export interface Toast {
   title?: string;
 }
 
-interface PlatformStats {
-  totalUsers: number;
-  totalDeposits: number;
-  totalWithdrawals: number;
-  totalInvested: number;
-  pendingWithdrawals: number;
-  pendingDeposits: number;
-  platformBalance: number;
-}
-
-interface SystemIntegration {
-  isLive: boolean;
-  dbLink: string;
-  authRpc: string;
-  apiGateway: string;
-  lastSync: number | null;
-}
-
 interface AppContextType {
   currentUser: User | null;
-  users: User[];
-  plans: InvestmentPlan[];
-  investments: Investment[];
+  firebaseUser: FirebaseUser | null;
+  holdings: PortfolioHolding[];
   transactions: Transaction[];
   tickets: SupportTicket[];
-  platformStats: PlatformStats;
+  portfolioMetrics: PortfolioMetrics;
+  assetAllocation: AssetAllocation[];
+  snapshots: PortfolioSnapshot[];
+  cashBalance: number;
   theme: 'dark' | 'light';
   toasts: Toast[];
-  systemIntegration: SystemIntegration;
+  isLoading: boolean;
   isHydrated: boolean;
   toggleTheme: () => void;
   removeToast: (id: string) => void;
   addToast: (message: string, type?: 'success' | 'info' | 'error', title?: string) => void;
-  login: (email: string, pass: string) => Promise<boolean>;
-  logout: () => void;
-  updateProfile: (data: Partial<User>) => void;
+  login: (email: string, password: string) => Promise<boolean>;
+  register: (email: string, password: string, name: string) => Promise<{ success: boolean; message?: string }>;
+  logout: () => Promise<void>;
+  resetPassword: (email: string) => Promise<boolean>;
+  updateProfile: (data: Partial<User>) => Promise<void>;
+  addHolding: (holding: Omit<PortfolioHolding, 'id' | 'userId' | 'currentPrice' | 'currentValue' | 'unrealizedGain' | 'unrealizedGainPercent'>) => Promise<void>;
+  editHolding: (holdingId: string, updates: Partial<PortfolioHolding>) => Promise<void>;
+  removeHolding: (holdingId: string) => Promise<void>;
+  addCash: (amount: number) => void;
+  withdrawCash: (amount: number) => void;
+  refreshPrices: () => Promise<void>;
   createTicket: (subject: string, message: string, priority: 'LOW' | 'MEDIUM' | 'HIGH') => void;
-  register: (name: string, email: string, userId: string, referrerCode?: string) => Promise<{success: boolean, message?: string}>;
-  makeDeposit: (amount: number, method: string) => void;
-  requestWithdrawal: (amount: number, method: string) => void;
-  investInPlan: (planId: string, amount: number) => string | null;
-  adminApproveWithdrawal: (txId: string) => void;
-  adminRejectWithdrawal: (txId: string) => void;
-  adminApproveDeposit: (txId: string) => void;
-  adminRejectDeposit: (txId: string) => void;
-  adminUpdateUser: (userId: string, data: Partial<User>) => void;
-  adminUpdatePlan: (plan: InvestmentPlan) => void;
-  adminDeletePlan: (id: string) => void;
-  adminCreatePlan: (plan: Omit<InvestmentPlan, 'id'>) => void;
-  debugTriggerProfit: () => void;
-  updateSystemIntegration: (config: Partial<SystemIntegration>) => void;
-  clearCache: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
-const SIMULATED_DAY_MS = 60000;
 
 const safeParse = <T,>(key: string, fallback: T): T => {
+  if (typeof window === 'undefined') return fallback;
   try {
     const item = localStorage.getItem(key);
     return item ? JSON.parse(item) : fallback;
@@ -75,51 +88,188 @@ const safeParse = <T,>(key: string, fallback: T): T => {
   }
 };
 
+const safeStringify = (value: any): string => {
+  try {
+    return JSON.stringify(value);
+  } catch (e) {
+    return '{}';
+  }
+};
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isHydrated, setIsHydrated] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [systemIntegration, setSystemIntegration] = useState<SystemIntegration>({
-    isLive: false, dbLink: '', authRpc: '', apiGateway: '', lastSync: null
-  });
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [users, setUsers] = useState<User[]>([]);
-  const [tickets, setTickets] = useState<SupportTicket[]>([]);
-  const [plans, setPlans] = useState<InvestmentPlan[]>([]);
-  const [investments, setInvestments] = useState<Investment[]>([]);
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
+  const [holdings, setHoldings] = useState<PortfolioHolding[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [tickets, setTickets] = useState<SupportTicket[]>([]);
+  const [snapshots, setSnapshots] = useState<PortfolioSnapshot[]>([]);
+  const [cashBalance, setCashBalance] = useState<number>(0);
 
-  // Faster hydration by avoiding state-per-item updates
   useEffect(() => {
-    const savedTheme = localStorage.getItem('hyip_theme') as 'dark' | 'light';
+    const savedTheme = localStorage.getItem('portfolio_theme') as 'dark' | 'light';
     if (savedTheme) setTheme(savedTheme);
+    
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      setFirebaseUser(fbUser);
+      
+      if (fbUser) {
+        const userData = await getUser(fbUser.uid);
+        if (userData) {
+          setCurrentUser(userData);
+        } else {
+          const newUser: User = {
+            id: fbUser.uid,
+            email: fbUser.email || '',
+            name: fbUser.displayName || 'User',
+            role: UserRole.USER,
+            createdAt: Date.now(),
+          };
+          await saveUser(newUser);
+          setCurrentUser(newUser);
+        }
+      } else {
+        setCurrentUser(null);
+        setHoldings([]);
+        setTransactions([]);
+        setSnapshots([]);
+        setCashBalance(0);
+      }
+      
+      setIsLoading(false);
+      setIsHydrated(true);
+    });
 
-    const config = safeParse('hyip_system_integration', { isLive: false, dbLink: '', authRpc: '', apiGateway: '', lastSync: null });
-    const user = safeParse('hyip_current_user', null);
-    const usersList = safeParse('hyip_users', MOCK_USERS);
-    const ticketsList = safeParse('hyip_tickets', []);
-    const plansList = safeParse('hyip_plans', INITIAL_PLANS);
-    const investmentsList = safeParse('hyip_investments', []);
-    const transactionsList = safeParse('hyip_transactions', []);
-
-    setSystemIntegration(config);
-    setCurrentUser(user);
-    setUsers(usersList);
-    setTickets(ticketsList);
-    setPlans(plansList);
-    setInvestments(investmentsList);
-    setTransactions(transactionsList);
-
-    setIsHydrated(true);
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
-    if (!isHydrated) return;
+    if (!currentUser) return;
+    
+    const loadUserData = async () => {
+      try {
+        const [holdingsData, transactionsData, snapshotsData] = await Promise.all([
+          getHoldings(currentUser.id),
+          getTransactions(currentUser.id),
+          getSnapshots(currentUser.id, 30)
+        ]);
+        
+        setHoldings(holdingsData);
+        setTransactions(transactionsData);
+        setSnapshots(snapshotsData);
+        
+        const savedCash = safeParse<number>(`portfolio_cash_${currentUser.id}`, 10000);
+        setCashBalance(savedCash);
+        
+        const savedTickets = safeParse<SupportTicket[]>(`portfolio_tickets_${currentUser.id}`, []);
+        setTickets(savedTickets);
+      } catch (error) {
+        console.error('Error loading user data:', error);
+      }
+    };
+    
+    loadUserData();
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (!isHydrated || !currentUser) return;
     const root = window.document.documentElement;
     if (theme === 'dark') root.classList.add('dark');
     else root.classList.remove('dark');
-    localStorage.setItem('hyip_theme', theme);
-  }, [theme, isHydrated]);
+    localStorage.setItem('portfolio_theme', theme);
+  }, [theme, isHydrated, currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    localStorage.setItem(`portfolio_cash_${currentUser.id}`, JSON.stringify(cashBalance));
+  }, [cashBalance, currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    localStorage.setItem(`portfolio_tickets_${currentUser.id}`, safeStringify(tickets));
+  }, [tickets, currentUser]);
+
+  const refreshPrices = useCallback(async () => {
+    if (holdings.length === 0) return;
+    
+    try {
+      const symbolsToFetch = holdings.map(h => ({
+        symbol: h.symbol,
+        type: h.type
+      }));
+      
+      const priceMap = await fetchMultiplePrices(symbolsToFetch);
+      
+      const updatedHoldings = holdings.map(holding => {
+        const asset = priceMap.get(holding.symbol);
+        if (!asset) return holding;
+        
+        const currentPrice = asset.currentPrice;
+        const currentValue = holding.quantity * currentPrice;
+        const totalCost = holding.quantity * holding.costBasis;
+        const unrealizedGain = currentValue - totalCost;
+        const unrealizedGainPercent = totalCost > 0 ? (unrealizedGain / totalCost) * 100 : 0;
+        
+        const updated = {
+          ...holding,
+          currentPrice,
+          currentValue,
+          unrealizedGain,
+          unrealizedGainPercent
+        };
+        
+        updateHolding(holding.id, updated);
+        return updated;
+      });
+      
+      setHoldings(updatedHoldings);
+    } catch (error) {
+      console.error('Error refreshing prices:', error);
+    }
+  }, [holdings]);
+
+  useEffect(() => {
+    if (!currentUser || holdings.length === 0) return;
+    
+    refreshPrices();
+    const interval = setInterval(refreshPrices, PRICE_UPDATE_INTERVAL);
+    return () => clearInterval(interval);
+  }, [currentUser, holdings.length, refreshPrices]);
+
+  useEffect(() => {
+    if (!currentUser || holdings.length === 0) return;
+    
+    const savePeriodicSnapshot = async () => {
+      const metrics = calculatePortfolioMetrics(holdings, cashBalance, snapshots);
+      const snapshot: PortfolioSnapshot = {
+        id: `snapshot_${Date.now()}`,
+        userId: currentUser.id,
+        timestamp: Date.now(),
+        totalValue: metrics.totalValue,
+        totalCost: metrics.totalCost,
+        unrealizedGain: metrics.unrealizedGain,
+        unrealizedGainPercent: metrics.unrealizedGainPercent,
+        cashBalance
+      };
+      
+      await saveSnapshot(snapshot);
+      setSnapshots(prev => [...prev, snapshot]);
+    };
+    
+    const interval = setInterval(savePeriodicSnapshot, SNAPSHOT_INTERVAL);
+    return () => clearInterval(interval);
+  }, [currentUser, holdings, cashBalance, snapshots]);
+
+  const portfolioMetrics = useMemo(() => {
+    return calculatePortfolioMetrics(holdings, cashBalance, snapshots);
+  }, [holdings, cashBalance, snapshots]);
+
+  const assetAllocation = useMemo(() => {
+    return calculateAssetAllocation(holdings, cashBalance);
+  }, [holdings, cashBalance]);
 
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
 
@@ -133,112 +283,200 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
 
-  const platformStats = useMemo(() => {
-    return {
-      totalUsers: users.length,
-      totalDeposits: transactions.filter(t => t.type === TransactionType.DEPOSIT && t.status === TransactionStatus.COMPLETED).reduce((a, b) => a + b.amount, 0),
-      totalWithdrawals: transactions.filter(t => t.type === TransactionType.WITHDRAWAL && t.status === TransactionStatus.COMPLETED).reduce((a, b) => a + b.amount, 0),
-      totalInvested: investments.reduce((a, b) => a + b.amount, 0),
-      pendingWithdrawals: transactions.filter(t => t.type === TransactionType.WITHDRAWAL && t.status === TransactionStatus.PENDING).length,
-      pendingDeposits: transactions.filter(t => t.type === TransactionType.DEPOSIT && t.status === TransactionStatus.PENDING).length,
-      platformBalance: users.reduce((a, b) => a + b.balance, 0),
-    };
-  }, [users, transactions, investments]);
-
-  useEffect(() => {
-    if (!isHydrated) return;
-    localStorage.setItem('hyip_current_user', JSON.stringify(currentUser));
-    localStorage.setItem('hyip_users', JSON.stringify(users));
-    localStorage.setItem('hyip_plans', JSON.stringify(plans));
-    localStorage.setItem('hyip_investments', JSON.stringify(investments));
-    localStorage.setItem('hyip_transactions', JSON.stringify(transactions));
-    localStorage.setItem('hyip_tickets', JSON.stringify(tickets));
-    localStorage.setItem('hyip_system_integration', JSON.stringify(systemIntegration));
-  }, [currentUser, users, plans, investments, transactions, tickets, systemIntegration, isHydrated]);
-
-  const processProfits = useCallback(() => {
-    const now = Date.now();
-    let hasChanges = false;
-    const newTransactions: Transaction[] = [];
-    const userUpdates: Record<string, number> = {};
-    let totalCurrentUserProfit = 0;
-
-    const nextInvestments = investments.map(inv => {
-      if (inv.status !== 'ACTIVE') return inv;
-      const plan = plans.find(p => p.id === inv.planId);
-      if (!plan) return inv;
-
-      let tempInv = { ...inv };
-      let updated = false;
-
-      while (now > tempInv.nextPayout && tempInv.totalPayouts < plan.durationDays) {
-        hasChanges = true;
-        updated = true;
-        const profit = tempInv.amount * (plan.roi / 100);
-        
-        userUpdates[tempInv.userId] = (userUpdates[tempInv.userId] || 0) + profit;
-        
-        if (tempInv.userId === currentUser?.id) {
-          totalCurrentUserProfit += profit;
-        }
-
-        newTransactions.push({
-          id: Math.random().toString(36).substr(2, 9),
-          userId: tempInv.userId,
-          amount: profit,
-          type: TransactionType.PROFIT,
-          status: TransactionStatus.COMPLETED,
-          date: now,
-          details: `Yield payout from ${plan.name}`
-        });
-
-        tempInv.totalPayouts += 1;
-        tempInv.earnedSoFar += profit;
-        tempInv.nextPayout += SIMULATED_DAY_MS;
-
-        if (tempInv.totalPayouts >= plan.durationDays) {
-          tempInv.status = 'COMPLETED';
-          break;
-        }
-      }
-      return updated ? tempInv : inv;
-    });
-
-    if (hasChanges) {
-      setInvestments(nextInvestments);
-      setTransactions(prev => [...newTransactions, ...prev]);
-      setUsers(prev => prev.map(u => userUpdates[u.id] ? { ...u, balance: u.balance + userUpdates[u.id] } : u));
-      
-      if (currentUser && userUpdates[currentUser.id]) {
-        setCurrentUser(prev => prev ? { ...prev, balance: prev.balance + userUpdates[prev.id!] } : null);
-        addToast(`ROI payout of $${totalCurrentUserProfit.toFixed(2)} received.`, 'success', 'Yield Credit');
-      }
-    }
-  }, [investments, plans, currentUser, addToast]);
-
-  useEffect(() => {
-    if (!isHydrated) return;
-    const interval = setInterval(processProfits, 5000);
-    return () => clearInterval(interval);
-  }, [isHydrated, processProfits]);
-
-  const login = async (email: string, pass: string) => {
-    const user = users.find(u => u.email === email && !u.isBlocked);
-    if (user && (email === 'admin@hyip.com' ? pass === 'admin123' : true)) {
-      setCurrentUser(user);
+  const login = async (email: string, password: string): Promise<boolean> => {
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      addToast('Successfully logged in', 'success', 'Welcome Back');
       return true;
+    } catch (error: any) {
+      addToast(error.message || 'Login failed', 'error', 'Authentication Error');
+      return false;
     }
-    return false;
   };
 
-  const logout = () => setCurrentUser(null);
+  const register = async (email: string, password: string, name: string): Promise<{ success: boolean; message?: string }> => {
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const newUser: User = {
+        id: userCredential.user.uid,
+        email,
+        name,
+        role: UserRole.USER,
+        createdAt: Date.now(),
+      };
+      await saveUser(newUser);
+      addToast('Account created successfully', 'success', 'Welcome');
+      return { success: true };
+    } catch (error: any) {
+      return { success: false, message: error.message || 'Registration failed' };
+    }
+  };
 
-  const updateProfile = (data: Partial<User>) => {
+  const logout = async (): Promise<void> => {
+    try {
+      await signOut(auth);
+      setCurrentUser(null);
+      setHoldings([]);
+      setTransactions([]);
+      setSnapshots([]);
+      setCashBalance(0);
+      addToast('Successfully logged out', 'info', 'Goodbye');
+    } catch (error: any) {
+      addToast(error.message || 'Logout failed', 'error', 'Error');
+    }
+  };
+
+  const resetPassword = async (email: string): Promise<boolean> => {
+    try {
+      await sendPasswordResetEmail(auth, email);
+      addToast('Password reset email sent', 'success', 'Check Your Email');
+      return true;
+    } catch (error: any) {
+      addToast(error.message || 'Failed to send reset email', 'error', 'Error');
+      return false;
+    }
+  };
+
+  const updateProfile = async (data: Partial<User>): Promise<void> => {
     if (!currentUser) return;
     const updated = { ...currentUser, ...data };
+    await saveUser(updated);
     setCurrentUser(updated);
-    setUsers(prev => prev.map(u => u.id === currentUser.id ? updated : u));
-    addToast('Security profile updated.', 'success', 'System Confirmed');
+    addToast('Profile updated successfully', 'success', 'Saved');
+  };
+
+  const addHolding = async (holdingData: Omit<PortfolioHolding, 'id' | 'userId' | 'currentPrice' | 'currentValue' | 'unrealizedGain' | 'unrealizedGainPercent'>): Promise<void> => {
+    if (!currentUser) return;
+    
+    try {
+      const asset = await fetchAssetPrice(holdingData.symbol, holdingData.type);
+      const currentPrice = asset?.currentPrice || holdingData.costBasis;
+      const currentValue = holdingData.quantity * currentPrice;
+      const totalCost = holdingData.quantity * holdingData.costBasis;
+      const unrealizedGain = currentValue - totalCost;
+      const unrealizedGainPercent = totalCost > 0 ? (unrealizedGain / totalCost) * 100 : 0;
+      
+      const holding: PortfolioHolding = {
+        ...holdingData,
+        id: `holding_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        userId: currentUser.id,
+        currentPrice,
+        currentValue,
+        totalCost,
+        unrealizedGain,
+        unrealizedGainPercent
+      };
+      
+      await saveHolding(holding);
+      setHoldings(prev => [...prev, holding]);
+      
+      const transaction: Transaction = {
+        id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        userId: currentUser.id,
+        holdingId: holding.id,
+        symbol: holding.symbol,
+        amount: totalCost,
+        quantity: holding.quantity,
+        pricePerUnit: holding.costBasis,
+        type: TransactionType.BUY,
+        status: TransactionStatus.COMPLETED,
+        date: holdingData.purchaseDate,
+        details: `Purchased ${holding.quantity} ${holding.symbol}`
+      };
+      
+      await saveTransaction(transaction);
+      setTransactions(prev => [transaction, ...prev]);
+      
+      addToast(`Added ${holding.quantity} ${holding.symbol} to portfolio`, 'success', 'Holding Added');
+    } catch (error: any) {
+      addToast(error.message || 'Failed to add holding', 'error', 'Error');
+    }
+  };
+
+  const editHolding = async (holdingId: string, updates: Partial<PortfolioHolding>): Promise<void> => {
+    try {
+      await updateHolding(holdingId, updates);
+      setHoldings(prev => prev.map(h => h.id === holdingId ? { ...h, ...updates } : h));
+      addToast('Holding updated successfully', 'success', 'Updated');
+    } catch (error: any) {
+      addToast(error.message || 'Failed to update holding', 'error', 'Error');
+    }
+  };
+
+  const removeHolding = async (holdingId: string): Promise<void> => {
+    try {
+      const holding = holdings.find(h => h.id === holdingId);
+      if (!holding) return;
+      
+      await deleteHolding(holdingId);
+      setHoldings(prev => prev.filter(h => h.id !== holdingId));
+      
+      if (currentUser) {
+        const transaction: Transaction = {
+          id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          userId: currentUser.id,
+          holdingId: holding.id,
+          symbol: holding.symbol,
+          amount: holding.currentValue,
+          quantity: holding.quantity,
+          pricePerUnit: holding.currentPrice,
+          type: TransactionType.SELL,
+          status: TransactionStatus.COMPLETED,
+          date: Date.now(),
+          details: `Sold ${holding.quantity} ${holding.symbol}`
+        };
+        
+        await saveTransaction(transaction);
+        setTransactions(prev => [transaction, ...prev]);
+        setCashBalance(prev => prev + holding.currentValue);
+      }
+      
+      addToast(`Removed ${holding.symbol} from portfolio`, 'info', 'Holding Removed');
+    } catch (error: any) {
+      addToast(error.message || 'Failed to remove holding', 'error', 'Error');
+    }
+  };
+
+  const addCash = (amount: number) => {
+    if (!currentUser) return;
+    setCashBalance(prev => prev + amount);
+    
+    const transaction: Transaction = {
+      id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      userId: currentUser.id,
+      amount,
+      type: TransactionType.DEPOSIT,
+      status: TransactionStatus.COMPLETED,
+      date: Date.now(),
+      details: 'Cash deposit'
+    };
+    
+    saveTransaction(transaction);
+    setTransactions(prev => [transaction, ...prev]);
+    addToast(`Deposited $${amount.toLocaleString()}`, 'success', 'Deposit');
+  };
+
+  const withdrawCash = (amount: number) => {
+    if (!currentUser || cashBalance < amount) {
+      addToast('Insufficient cash balance', 'error', 'Error');
+      return;
+    }
+    
+    setCashBalance(prev => prev - amount);
+    
+    const transaction: Transaction = {
+      id: `tx_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      userId: currentUser.id,
+      amount,
+      type: TransactionType.WITHDRAWAL,
+      status: TransactionStatus.COMPLETED,
+      date: Date.now(),
+      details: 'Cash withdrawal'
+    };
+    
+    saveTransaction(transaction);
+    setTransactions(prev => [transaction, ...prev]);
+    addToast(`Withdrew $${amount.toLocaleString()}`, 'info', 'Withdrawal');
   };
 
   const createTicket = (subject: string, message: string, priority: 'LOW' | 'MEDIUM' | 'HIGH') => {
@@ -253,152 +491,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       createdAt: Date.now()
     };
     setTickets(prev => [newTicket, ...prev]);
-    addToast('Support ticket logged.', 'info', 'Inquiry Active');
+    addToast('Support ticket created', 'info', 'Ticket Submitted');
   };
 
-  const register = async (name: string, email: string, userId: string, referrerCode?: string) => {
-    const norm = userId.trim().toUpperCase();
-    if (users.find(u => u.email === email || u.referralCode === norm)) return { success: false, message: 'Identity Conflict' };
-
-    const newUser: User = {
-      id: Math.random().toString(36).substr(2, 9),
-      email, name, role: UserRole.USER, balance: 5, 
-      totalInvested: 0, totalWithdrawn: 0, referralCode: norm,
-      createdAt: Date.now(), isBlocked: false,
-      kycLevel: 0, twoFactorEnabled: false,
-      referredBy: referrerCode ? users.find(u => u.referralCode === referrerCode.trim().toUpperCase())?.id : undefined
-    };
-    setUsers([...users, newUser]);
-    setCurrentUser(newUser);
-    return { success: true };
-  };
-
-  const makeDeposit = (amount: number, method: string) => {
-    if (!currentUser) return;
-    const isInstant = !['Bank Transfer', 'Credit Card'].includes(method);
-    const status = isInstant ? TransactionStatus.COMPLETED : TransactionStatus.PENDING;
-    const tx: Transaction = { id: Math.random().toString(36).substr(2, 9), userId: currentUser.id, amount, type: TransactionType.DEPOSIT, status, date: Date.now(), method };
-    setTransactions(prev => [tx, ...prev]);
-    if (status === TransactionStatus.COMPLETED) {
-      setCurrentUser(prev => prev ? { ...prev, balance: prev.balance + amount } : null);
-      setUsers(prev => prev.map(u => u.id === currentUser.id ? { ...u, balance: u.balance + amount } : u));
-      addToast(`Deposited $${amount.toLocaleString()} via ${method}.`, 'success', 'Confirmed');
-    } else {
-      addToast(`Processing $${amount.toLocaleString()} via ${method}.`, 'info', 'Pending Verification');
-    }
-  };
-
-  const requestWithdrawal = (amount: number, method: string) => {
-    if (!currentUser || currentUser.balance < amount) return;
-    const tx: Transaction = { id: Math.random().toString(36).substr(2, 9), userId: currentUser.id, amount, type: TransactionType.WITHDRAWAL, status: TransactionStatus.PENDING, date: Date.now(), method };
-    setTransactions(prev => [tx, ...prev]);
-    setCurrentUser(prev => prev ? { ...prev, balance: prev.balance - amount } : null);
-    setUsers(prev => prev.map(u => u.id === currentUser.id ? { ...u, balance: u.balance - amount } : u));
-    addToast(`Withdrawal of $${amount.toLocaleString()} pending.`, 'info', 'Verification Step');
-  };
-
-  const investInPlan = (planId: string, amount: number) => {
-    const u = currentUser;
-    const p = plans.find(p => p.id === planId);
-    if (!u || u.balance < amount || !p || amount < p.minAmount || amount > p.maxAmount) return 'Invalid Parameters';
-    
-    const newInv: Investment = { 
-      id: Math.random().toString(36).substr(2, 9), 
-      userId: u.id, 
-      planId, 
-      amount, 
-      earnedSoFar: 0, 
-      startDate: Date.now(), 
-      nextPayout: Date.now() + SIMULATED_DAY_MS, 
-      totalPayouts: 0, 
-      status: 'ACTIVE' 
-    };
-
-    setInvestments(prev => [newInv, ...prev]);
-    setCurrentUser(prev => prev ? { ...prev, balance: prev.balance - amount, totalInvested: prev.totalInvested + amount } : null);
-    setUsers(prev => prev.map(usr => usr.id === u.id ? { ...usr, balance: usr.balance - amount, totalInvested: usr.totalInvested + amount } : usr));
-    
-    const tx: Transaction = { id: Math.random().toString(36).substr(2, 9), userId: u.id, amount, type: TransactionType.DEPOSIT, status: TransactionStatus.COMPLETED, date: Date.now(), details: `Stake: ${p.name}` };
-    setTransactions(prev => [tx, ...prev]);
-    
-    addToast(`$${amount.toLocaleString()} allocated to ${p.name}.`, 'success', 'Protocol Active');
-    return null;
-  };
-
-  const adminApproveWithdrawal = (txId: string) => {
-    setTransactions(prev => prev.map(t => {
-      if (t.id === txId) {
-        setUsers(uList => uList.map(u => u.id === t.userId ? { ...u, totalWithdrawn: u.totalWithdrawn + t.amount } : u));
-        return { ...t, status: TransactionStatus.COMPLETED };
-      }
-      return t;
-    }));
-  };
-
-  const adminRejectWithdrawal = (txId: string) => {
-    setTransactions(prev => prev.map(t => t.id === txId ? { ...t, status: TransactionStatus.REJECTED } : t));
-    const tx = transactions.find(t => t.id === txId);
-    if (tx) {
-      setUsers(prev => prev.map(u => u.id === tx.userId ? { ...u, balance: u.balance + tx.amount } : u));
-    }
-  };
-
-  const adminApproveDeposit = (txId: string) => {
-    setTransactions(prev => prev.map(t => {
-      if (t.id === txId && t.status === TransactionStatus.PENDING) {
-        setUsers(uList => uList.map(u => u.id === t.userId ? { ...u, balance: u.balance + t.amount } : u));
-        return { ...t, status: TransactionStatus.COMPLETED };
-      }
-      return t;
-    }));
-  };
-
-  const adminRejectDeposit = (txId: string) => {
-    setTransactions(prev => prev.map(t => t.id === txId ? { ...t, status: TransactionStatus.REJECTED } : t));
-  };
-
-  const adminUpdateUser = (userId: string, data: Partial<User>) => {
-    setUsers(prev => prev.map(u => u.id === userId ? { ...u, ...data } : u));
-  };
-
-  const adminUpdatePlan = (plan: InvestmentPlan) => setPlans(prev => prev.map(p => p.id === plan.id ? plan : p));
-  const adminDeletePlan = (id: string) => setPlans(prev => prev.filter(p => p.id !== id));
-  const adminCreatePlan = (planData: Omit<InvestmentPlan, 'id'>) => setPlans([...plans, { ...planData, id: 'plan_' + Date.now() }]);
-  
-  const debugTriggerProfit = () => {
-    setInvestments(prev => prev.map(inv => inv.status === 'ACTIVE' ? { ...inv, nextPayout: Date.now() - 1000 } : inv));
-  };
-
-  const clearCache = () => {
-    Object.keys(localStorage).forEach(key => {
-      if (key.startsWith('hyip_')) {
-        localStorage.removeItem(key);
-      }
-    });
-    window.location.reload();
-  };
-
-  const updateSystemIntegration = (config: Partial<SystemIntegration>) => {
-    setSystemIntegration(prev => ({ ...prev, ...config }));
-  };
-
-  if (!isHydrated) {
+  if (!isHydrated || isLoading) {
     return (
       <div style={{ backgroundColor: '#0b0e14' }} className="min-h-screen flex flex-col items-center justify-center p-10 text-center space-y-4">
         <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-        <p className="font-black text-blue-500 uppercase tracking-widest animate-pulse">Establishing Node Link</p>
+        <p className="font-black text-blue-500 uppercase tracking-widest animate-pulse">Loading Portfolio</p>
       </div>
     );
   }
 
   return (
     <AppContext.Provider value={{
-      currentUser, users, plans, investments, transactions, tickets, platformStats, theme, toggleTheme,
-      toasts, removeToast, addToast, systemIntegration, isHydrated,
-      login, logout, updateProfile, createTicket, register, makeDeposit, requestWithdrawal, investInPlan,
-      adminApproveWithdrawal, adminRejectWithdrawal, adminApproveDeposit, adminRejectDeposit,
-      adminUpdateUser, adminUpdatePlan, adminDeletePlan, adminCreatePlan, debugTriggerProfit,
-      updateSystemIntegration, clearCache
+      currentUser,
+      firebaseUser,
+      holdings,
+      transactions,
+      tickets,
+      portfolioMetrics,
+      assetAllocation,
+      snapshots,
+      cashBalance,
+      theme,
+      toggleTheme,
+      toasts,
+      removeToast,
+      addToast,
+      isLoading,
+      isHydrated,
+      login,
+      register,
+      logout,
+      resetPassword,
+      updateProfile,
+      addHolding,
+      editHolding,
+      removeHolding,
+      addCash,
+      withdrawCash,
+      refreshPrices,
+      createTicket
     }}>
       {children}
     </AppContext.Provider>

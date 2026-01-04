@@ -1,7 +1,7 @@
 {
-  "name": "cryptoyield---premium-hyip-platform",
+  "name": "portfolio-tracker",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,8 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@google/genai": "^0.21.0",
-    "firebase": "^12.7.0",
+    "@google/generative-ai": "^0.21.0",
+    "firebase": "^11.0.2",
     "lucide-react": "0.454.0",
     "next": "^16.1.1",
     "react": "18.2.0",
