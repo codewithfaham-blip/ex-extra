@@ -10,10 +10,20 @@ export enum TransactionStatus {
 }
 
 export enum TransactionType {
+  BUY = 'BUY',
+  SELL = 'SELL',
+  DIVIDEND = 'DIVIDEND',
   DEPOSIT = 'DEPOSIT',
-  WITHDRAWAL = 'WITHDRAWAL',
-  PROFIT = 'PROFIT',
-  REFERRAL = 'REFERRAL'
+  WITHDRAWAL = 'WITHDRAWAL'
+}
+
+export enum AssetType {
+  STOCK = 'STOCK',
+  CRYPTO = 'CRYPTO',
+  ETF = 'ETF',
+  BOND = 'BOND',
+  MUTUAL_FUND = 'MUTUAL_FUND',
+  CASH = 'CASH'
 }
 
 export interface SupportTicket {
@@ -26,63 +36,91 @@ export interface SupportTicket {
   createdAt: number;
 }
 
-export interface LinkedWallet {
-  id: string;
-  type: string; // BTC, ETH, USDT, etc.
-  address: string;
-  label: string;
-  addedAt: number;
-}
-
 export interface User {
   id: string;
   email: string;
   name: string;
   avatar?: string;
   role: UserRole;
-  balance: number;
-  totalInvested: number;
-  totalWithdrawn: number;
-  referralCode: string;
-  referredBy?: string;
   createdAt: number;
-  isBlocked: boolean;
-  kycLevel: 0 | 1 | 2; // 0: None, 1: Basic, 2: Institutional
-  twoFactorEnabled: boolean;
   phoneNumber?: string;
   country?: string;
-  linkedWallets?: LinkedWallet[];
 }
 
-export interface InvestmentPlan {
+export interface Asset {
   id: string;
+  symbol: string;
   name: string;
-  minAmount: number;
-  maxAmount: number;
-  roi: number; // Percentage
-  period: 'DAILY' | 'HOURLY' | 'WEEKLY';
-  durationDays: number;
+  type: AssetType;
+  currentPrice: number;
+  previousClose?: number;
+  priceChange24h?: number;
+  priceChangePercent24h?: number;
+  lastUpdated: number;
+  currency: string;
 }
 
-export interface Investment {
+export interface PortfolioHolding {
   id: string;
   userId: string;
-  planId: string;
-  amount: number;
-  earnedSoFar: number; 
-  startDate: number;
-  nextPayout: number;
-  totalPayouts: number;
-  status: 'ACTIVE' | 'COMPLETED';
+  assetId: string;
+  symbol: string;
+  name: string;
+  type: AssetType;
+  quantity: number;
+  costBasis: number; // Price per unit at purchase
+  purchaseDate: number;
+  currentPrice: number;
+  currentValue: number; // quantity * currentPrice
+  totalCost: number; // quantity * costBasis
+  unrealizedGain: number; // currentValue - totalCost
+  unrealizedGainPercent: number; // (unrealizedGain / totalCost) * 100
+  notes?: string;
 }
 
 export interface Transaction {
   id: string;
   userId: string;
+  holdingId?: string;
+  symbol?: string;
   amount: number;
+  quantity?: number;
+  pricePerUnit?: number;
   type: TransactionType;
   status: TransactionStatus;
   date: number;
   method?: string;
   details?: string;
+  fee?: number;
+}
+
+export interface PortfolioSnapshot {
+  id: string;
+  userId: string;
+  timestamp: number;
+  totalValue: number;
+  totalCost: number;
+  unrealizedGain: number;
+  unrealizedGainPercent: number;
+  cashBalance: number;
+}
+
+export interface PortfolioMetrics {
+  totalValue: number;
+  totalCost: number;
+  cashBalance: number;
+  investedAmount: number;
+  unrealizedGain: number;
+  unrealizedGainPercent: number;
+  dayChange: number;
+  dayChangePercent: number;
+  allTimeHigh: number;
+  allTimeLow: number;
+}
+
+export interface AssetAllocation {
+  type: AssetType;
+  value: number;
+  percentage: number;
+  count: number;
 }
